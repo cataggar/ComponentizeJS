@@ -24,7 +24,7 @@ const { version } = JSON.parse(
 const isWindows = platform === 'win32';
 const DEBUG_BINDINGS = false;
 const DEBUG_CALLS = false;
-const DEBUG_BUILD = false;
+const DEBUG_BUILD = true;
 
 function maybeWindowsPath(path) {
   if (!path) return path;
@@ -173,6 +173,7 @@ export async function componentize(jsSource, witWorld, opts) {
     SOURCE_NAME: sourceName,
     IMPORT_WRAPPER_CNT: Object.keys(importWrappers).length.toString(),
     EXPORT_CNT: exports.length.toString(),
+    WASMTIME_BACKTRACE_DETAILS: '1',
   };
 
   for (const [idx, [export_name, expt]] of exports.entries()) {
