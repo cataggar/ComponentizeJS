@@ -4,5 +4,6 @@ include("StarlingMonkey/cmake/add_as_subproject.cmake")
 include_directories("StarlingMonkey")
 
 add_builtin(componentize::embedding SRC embedding/embedding.cpp)
+include_directories("StarlingMonkey")
 
 project(ComponentizeJS)

@@ -1,7 +1,8 @@
 {
   "name": "@bytecodealliance/componentize-js",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "homepage": "https://github.com/bytecodealliance/componentize-js#readme",
+  "description": "ESM -> WebAssembly Component creator, via a SpiderMonkey JS engine embedding",
   "type": "module",
   "exports": "./src/componentize.js",
   "devDependencies": {
@@ -9,7 +10,7 @@
     "mocha": "^10.2.0"
   },
   "dependencies": {
-    "@bytecodealliance/jco": "^1.5.0",
+    "@bytecodealliance/jco": "^1.7.0",
     "@bytecodealliance/weval": "^0.3.2",
     "@bytecodealliance/wizer": "^7.0.5",
     "es-module-lexer": "^1.5.4"
