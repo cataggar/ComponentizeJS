@@ -103,6 +103,30 @@ struct JsBindgen<'a> {
     imported_resources: BTreeSet<TypeId>,
 }
 
+impl<'a> JsBindgen<'a> {
+    fn new(
+        resolve: &'a Resolve,
+        world: WorldId,
+    ) -> JsBindgen<'a> {
+        JsBindgen {
+            src: Source::default(),
+            esm_bindgen: EsmBindgen::default(),
+            local_names: LocalNames::default(),
+            all_intrinsics: BTreeSet::new(),
+            resolve,
+            world,
+            sizes: SizeAlign::default(),
+            memory: "$memory".to_string(),
+            realloc: "$realloc".to_string(),
+            local_package_name: resolve.id_of_name(resolve.worlds[world].package.unwrap(), ""),
+            exports: Vec::new(),
+            imports: Vec::new(),
+            resource_directions: HashMap::new(),
+            imported_resources: BTreeSet::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum CoreTy {
     I32,
@@ -201,6 +225,8 @@ pub fn componentize_bindgen(
             let item = items.iter().next().unwrap();
             if let Some(resource) = resource {
                 let export_name = resource.to_upper_camel_case();
+                // println!("export_name: {}", export_name);
+
                 let binding_name = binding_name(&export_name, &item.iface_name);
                 if item.iface {
                     specifier_list.push(format!("import_{binding_name} as {export_name}"));
@@ -370,6 +396,8 @@ pub fn componentize_bindgen(
     output.push_str(&js_intrinsics);
     output.push_str(&bindgen.src);
 
+    println!("js bindings: {}", output.to_string());
+
     Ok(Componentization {
         js_bindings: output.to_string(),
         exports: bindgen.exports,
@@ -449,6 +477,7 @@ impl JsBindgen<'_> {
                         StringEncoding::UTF8,
                         func,
                     );
+                    // println!("exporting function: {}", func.name);
                     self.esm_bindgen.add_export_func(
                         None,
                         local_name.to_string(),
@@ -491,6 +520,8 @@ impl JsBindgen<'_> {
                                 let name = &name;
                                 let ty = &self.resolve.types[*ty];
                                 let resource_name = ty.name.as_ref().unwrap().to_upper_camel_case();
+                                println!("typ.name: {}", ty.name.as_ref().unwrap());
+                                println!("resource_name: {}", resource_name);
                                 let local_name = self
                                     .local_names
                                     .get_or_create(
@@ -507,6 +538,7 @@ impl JsBindgen<'_> {
                                     StringEncoding::UTF8,
                                     &func,
                                 );
+                                println!("ensure_exported_resource called from FunctionKind::Constructor");
                                 self.esm_bindgen.ensure_exported_resource(
                                     Some(&name),
                                     local_name,
@@ -993,7 +1025,7 @@ impl JsBindgen<'_> {
 
 type LocalName = String;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Binding {
     Interface(BTreeMap<String, Binding>),
     Resource(LocalName),
@@ -1014,6 +1046,7 @@ impl EsmBindgen {
         local_name: String,
         func_name: String,
     ) {
+        println!("add_export_fn {iface_id_or_kebab:?} {local_name} {func_name}");
         let mut iface = &mut self.exports;
         if let Some(iface_id_or_kebab) = iface_id_or_kebab {
             // convert kebab names to camel case, leave ids as-is
@@ -1045,6 +1078,7 @@ impl EsmBindgen {
         local_name: String,
         resource_name: String,
     ) {
+        println!("ensure_exported_resource {iface_id_or_kebab:?} {local_name} {resource_name}");
         let mut iface = &mut self.exports;
         if let Some(iface_id_or_kebab) = iface_id_or_kebab {
             // convert kebab names to camel case, leave ids as-is
@@ -1067,6 +1101,7 @@ impl EsmBindgen {
                 ),
             };
         }
+        println!("ensure_exported_resource, resource_name {resource_name}, local_name {local_name}");
         iface.insert(resource_name, Binding::Resource(local_name));
     }
 
@@ -1083,6 +1118,7 @@ impl EsmBindgen {
                 if !self.exports.contains_key(&alias)
                     && !self.export_aliases.values().any(|_alias| &alias == _alias)
                 {
+                    println!("populate_export_aliases insert {expt_name} {alias}");
                     self.export_aliases.insert(expt_name.to_string(), alias);
                 }
             }
@@ -1096,6 +1132,7 @@ impl EsmBindgen {
         _local_names: &mut LocalNames,
         source_name: &str,
     ) {
+        println!("render_export_imports, imports_object {imports_object} ,source_name {source_name}");
         // TODO: bring back these validations of imports
         // including using the flattened bindings
         if self.exports.len() > 0 {
@@ -1185,6 +1222,7 @@ impl EsmBindgen {
                     }
                     // After defining all the local bindings, verify them throwing errors as necessary
                     for (external_name, import) in bindings {
+                        println!("verify external_name: {}", external_name);
                         let local_name = match import {
                             Binding::Interface(_) => panic!("Nested interfaces unsupported"),
                             Binding::Resource(local_name) | Binding::Local(local_name) => {
@@ -1243,9 +1281,252 @@ fn interface_name_from_string(name: &str) -> Option<String> {
     iface_name
 }
 
+// fn resource_name_from_string
+// resource may be a kebab name and it should be pascal case
+fn resource_name_from_string(name: &str) -> String {
+    name.to_upper_camel_case()
+}
+
 fn binding_name(func_name: &str, iface_name: &Option<String>) -> String {
     match iface_name {
         Some(iface_name) => format!("{iface_name}${func_name}"),
         None => format!("{func_name}"),
     }
+}
+
+// add tests
+#[cfg(test)]
+mod tests {
+    use orca_wasm::ir::types;
+
+    use super::*;
+
+    #[test]
+    fn test_ensure_exported_resource() {
+        let mut esm_bindgen = EsmBindgen::default();
+        esm_bindgen.ensure_exported_resource(Some("my-interface"), "my-resource".to_string(), "my-resource".to_string());
+        assert_eq!(esm_bindgen.exports.get("myInterface").unwrap(), &Binding::Interface(
+            vec![("MyResource".to_string(), Binding::Resource("myResource".to_string()))].into_iter().collect()
+        ));
+    }
+
+    // test panic received "Exported interface {} cannot be both a function and an interface or resource"
+    #[test]
+    #[should_panic]
+    fn test_ensure_exported_resource_panic() {
+        let mut esm_bindgen = EsmBindgen::default();
+        // esm_bindgen.exports.insert("myInterface".to_string(), Binding::Local("myResource".to_string()));
+        // esm_bindgen.add_export_func(iface_id_or_kebab, local_name, func_name);
+        esm_bindgen.add_export_func(None, "futbol".to_string(), "futbol".to_string());
+        esm_bindgen.ensure_exported_resource(Some("futbol"), "futbol".to_string(), "futbol".to_string());
+    }
+
+    #[test]
+    fn test_binding_name() {
+        assert_eq!(binding_name("foo", &None), "foo");
+        assert_eq!(binding_name("foo", &Some("bar".to_string())), "bar$foo");
+    }
+
+    #[test]
+    fn test_interface_name_from_string() {
+        assert_eq!(interface_name_from_string("ns:pkg@v/my-interface"), Some("myInterface".to_string()));
+        assert_eq!(interface_name_from_string("ns:pkg@v/my-interface@1.0.0"), Some("myInterface_1_0_0".to_string()));
+        assert_eq!(interface_name_from_string("ns:pkg@v/my-interface@1.0.0-alpha"), Some("myInterface_1_0_0_alpha".to_string()));
+        assert_eq!(interface_name_from_string("ns:pkg@v/my-interface@1.0.0-alpha.1"), Some("myInterface_1_0_0_alpha_1".to_string()));
+        assert_eq!(interface_name_from_string("ns:pkg@v/my-interface@1.0.0-alpha.1.2"), Some("myInterface_1_0_0_alpha_1_2".to_string()));
+        assert_eq!(interface_name_from_string("ns:pkg@v/my-interface@1.0.0-alpha.1.2.3"), Some("myInterface_1_0_0_alpha_1_2_3".to_string()));
+    }
+
+    // verfify that resource source_name is pascal case
+    #[test]
+    fn test_resource_name_from_string() {
+        assert_eq!(resource_name_from_string("my-resource"), "MyResource");
+    }
+
+    // test componentize_bindgen for resources
+    // #[test]
+    // fn test_componentize_bindgen() {
+    //     let mut bindgen = JsBindgen::default();
+    //     let mut resolve = Resolve::default();
+    //     let mut local_names = LocalNames::default();
+    //     let mut sizes = SizeAlign::new(32);
+    //     let mut memory = "memory".to_string();
+    //     let mut realloc = "realloc".to_string();
+    //     let mut src = Source::default();
+    //     let mut exports = Vec::new();
+    //     let mut imports = Vec::new();
+    //     let mut imported_resources = BTreeSet::new();
+    //     let mut resource_directions = BTreeMap::new();
+    //     let mut all_intrinsics = BTreeSet::new();
+    //     let mut world = 0;
+    //     let mut local_package_name = "local-package".to_string();
+    //     let mut name = "name".to_string();
+    //     let mut local_name = "local-name".to_string();
+    //     let mut local_name_camel = "localName".to_string();
+    //     let mut local_name_kebab = "local-name".to_string();
+    //     let mut local_name_pascal = "LocalName".to_string();
+    //     let mut local_name_snake = "local_name".to_string();
+    //     let mut local_name_upper_camel = "LocalName".to_string();
+    //     let mut local_name_upper_snake = "LOCAL_NAME".to_string();
+    //     let mut local_name_upper_kebab = "LOCAL-NAME".to_string();
+    //     let mut local_name_lower_camel = "localName".to_string();
+    //     let mut local_name_lower_snake = "local_name".to_string();
+    //     let mut local_name_lower_kebab = "local-name".to_string();
+    //     let mut local_name_camel_plural = "localNames".to_string();
+    //     let mut local_name_kebab_plural = "local-names".to_string();
+    //     let mut local_name_pascal_plural = "LocalNames".to_string();
+    //     let mut local_name_snake_plural = "local_names".to_string();
+    //     let mut local_name_upper_camel_plural = "LocalNames".to_string();
+    //     let mut local_name_upper_snake_plural = "LOCAL_NAMES".to_string();
+    //     let mut local_name_upper_kebab_plural = "LOCAL-NAMES".to_string();
+    //     let mut local_name_lower_camel_plural = "localNames".to_string();
+    //     let mut local_name_lower_snake_plural = "local_names".to_string();
+        
+    // }
+
+    #[test]
+    fn select_world() -> Result<()> {
+        let mut resolve = Resolve::default();
+        // resolve.push_str(
+        //     "test.wit",
+        //     r#"
+        //         package foo:bar@0.1.0;
+
+        //         world foo {}
+        //     "#,
+        // )?;
+        // resolve.push_str(
+        //     "test.wit",
+        //     r#"
+        //         package foo:baz@0.1.0;
+
+        //         world foo {}
+        //     "#,
+        // )?;
+        // resolve.push_str(
+        //     "test.wit",
+        //     r#"
+        //         package foo:baz@0.2.0;
+
+        //         world foo {}
+        //     "#,
+        // )?;
+
+        let packageId = resolve.push_str(
+            "test.wit",
+            r#"
+                package foo:baz@0.2.0;
+                world cowsay {
+                    export canvas: interface {
+                        resource void-expression {
+                            kind: func() -> syntax-kind;
+                        }
+                        type syntax-kind = u16;
+                    }
+                }
+            "#,
+        )?;
+
+        assert_eq!(resolve.packages.len(), 1);
+        let package = &resolve.packages[packageId];
+        assert_eq!(package.worlds.len(), 1);
+        let world_id = package.worlds.first().unwrap();
+        assert_eq!(world_id.0, "cowsay");
+        
+        // assert_eq!(resolve.types.len(), 3); // Why 3?
+        let types = resolve.types.iter().collect::<Vec<_>>();
+        assert_eq!(types[0].1.name.as_deref(), Some("void-expression"));
+        // let void_expression = &resolve.types[*types[0].0];
+        let void_expression = types[0];
+        println!("Void expression: {:?}", void_expression);
+        // Void expression: (Id { idx: 0 }, TypeDef { name: Some("void-expression"), kind: Resource, owner: Interface(Id { idx: 0 }), docs: Docs { contents: None }, stability: Unknown })
+        assert_eq!(void_expression.1.kind, TypeDefKind::Resource);
+
+
+        // void_expression.
+        assert_eq!(types[1].1.name.as_deref(), Some("syntax-kind"));
+        let interfaces = resolve.interfaces.iter().collect::<Vec<_>>();
+
+        assert_eq!(interfaces.len(), 1);
+        // let canvas = interfaces[0].1;
+        // assert_eq!(canvas.name.as_deref(), Some("canvas"));
+        // canvas.exports.len();
+        // canvas.
+        // assert_eq!(canvas.exports.len(), 2);
+        let world = &resolve.worlds[*world_id.1];
+        assert_eq!(world.exports.len(), 1);
+        let canvas = world.exports.first().unwrap().1;
+        match canvas {
+            // &WorldItem::Resource(resource) => {
+            //     assert_eq!(resource.name.as_deref(), Some("void-expression"));
+            //     // assert_eq!(resource.kind, ResourceKind::Function);
+            //     // assert_eq!(resource.params.len(), 0);
+            //     // assert_eq!(resource.results.len(), 1);
+            //     // assert_eq!(resource.results[0], types::Type::Id(types[1].0));
+            // },
+            WorldItem::Type(typedef_id) => {
+                let typedef = &resolve.types[*typedef_id];
+                assert_eq!(typedef.name.as_deref(), Some("syntax-kind"));
+                // assert_eq!(typedef.kind, TypeDefKind::Type(types::Type::Id(types[2].0)));
+
+            }
+            WorldItem::Interface { id, stability } => {
+                let interface = resolve.interfaces.get(*id).unwrap();
+                // assert_eq!(interface.name.as_deref(), Some("canvas")); // Nope, it is None.
+                // The interface is not named.
+                println!("Interface {:?}", interface);
+                // for each type
+                assert_eq!(interface.types.len(), 2);
+                interface.types.iter().for_each(|(name, id)| {
+                    let typedef = &resolve.types[*id];
+                    println!("Type: {:?}", typedef);
+                    // assert_eq!(typedef.name.as_deref(), Some("syntax-kind"));
+                    // assert_eq!(typedef.kind, TypeDefKind::Type(types::Type::Id(types[2].0)));
+                });
+
+            },
+            WorldItem::Function(function) => todo!("function"),
+            // WorldItem::Type(id) => todo!(),
+            // &WorldItem::Interface{id, stability} => {
+            //     println!("Interface");
+            // },
+
+            // _ => panic!("Expected"),
+        }
+
+
+
+
+        // let canvas = world.1.interfaces.get("canvas").unwrap();
+
+
+        // resolve.worlds[dummy].imports.insert(
+        //     "foo:bar/foo".to_string(),
+        //     WorldItem::Function(Function {
+        //         name: "foo".to_string(),
+        //         kind: FunctionKind::Freestanding,
+        //         params: vec![],
+        //         results:  //WasmTypeList::new(),
+        //         docs: Docs::default(),
+        //         stability: Stability::default(),
+        //     }),
+        // );
+
+        // assert!(resolve.select_world(dummy, None).is_ok());
+        // assert!(resolve.select_world(dummy, Some("xx")).is_err());
+        // assert!(resolve.select_world(dummy, Some("")).is_err());
+        // assert!(resolve.select_world(dummy, Some("foo:bar/foo")).is_ok());
+        // assert!(resolve
+        //     .select_world(dummy, Some("foo:bar/foo@0.1.0"))
+        //     .is_ok());
+        // assert!(resolve.select_world(dummy, Some("foo:baz/foo")).is_err());
+        // assert!(resolve
+        //     .select_world(dummy, Some("foo:baz/foo@0.1.0"))
+        //     .is_ok());
+        // assert!(resolve
+        //     .select_world(dummy, Some("foo:baz/foo@0.2.0"))
+        //     .is_ok());
+        Ok(())
+    }
+
 }
